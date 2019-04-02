@@ -2687,3 +2687,26 @@ bool CoreChecks::ValidateComputeWorkGroupSizes(const shader_module *shader) {
     }
     return skip;
 }
+
+bool CoreChecks::ValidateComputeWorkGroupInvocations(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) {
+    bool skip = false;
+    unordered_map<VkShaderModule, std::unique_ptr<shader_module>>::iterator it = shaderModuleMap.begin();
+    while (it != shaderModuleMap.end()) {
+        uint32_t local_size_x = 0;
+        uint32_t local_size_y = 0;
+        uint32_t local_size_z = 0;
+        if (FindLocalSize(&(*it->second), local_size_x, local_size_y, local_size_z)) {
+            uint32_t invocations = local_size_x * local_size_y * local_size_z * groupCountX * groupCountY * groupCountZ;
+            uint32_t limit = phys_dev_props.limits.maxComputeWorkGroupInvocations;
+            if (invocations > limit) {
+                skip |= log_msg(report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_SHADER_MODULE_EXT,
+                                HandleToUint64(it->first), "UNASSIGNED-features-limits-maxComputeWorkGroupInvocations",
+                                "ShaderMdoule %s invocations (%" PRIu32
+                                ") exceeds device limit maxComputeWorkGroupInvocations (%" PRIu32 ").",
+                                report_data->FormatHandle(it->first).c_str(), invocations, limit);
+            }
+        }
+        ++it;
+    }
+    return skip;
+}
