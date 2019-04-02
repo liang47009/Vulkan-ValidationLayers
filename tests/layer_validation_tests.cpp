@@ -11598,9 +11598,19 @@ TEST_F(VkLayerTest, CmdDispatchExceedLimits) {
         return;
     }
 
-    // Create a minimal compute pipeline
-    std::string cs_text = "#version 450\nvoid main() {}\n";  // minimal no-op shader
-    VkShaderObj cs_obj(m_device, cs_text.c_str(), VK_SHADER_STAGE_COMPUTE_BIT, this);
+    const std::string spv_source = R"(
+        OpCapability Shader
+        OpMemoryModel Logical GLSL450
+        OpEntryPoint GLCompute %main "main"
+        OpExecutionMode %main LocalSize 65536 65536 65536
+%void = OpTypeVoid
+    %3 = OpTypeFunction %void
+%main = OpFunction %void None %3
+    %5 = OpLabel
+        OpReturn
+        OpFunctionEnd
+    )";
+    VkShaderObj cs_obj1(m_device, spv_source, VK_SHADER_STAGE_COMPUTE_BIT, this);
 
     VkPipelineLayoutCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -11619,15 +11629,31 @@ TEST_F(VkLayerTest, CmdDispatchExceedLimits) {
     pipeline_info.stage.pNext = nullptr;
     pipeline_info.stage.flags = 0;
     pipeline_info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    pipeline_info.stage.module = cs_obj.handle();
+    pipeline_info.stage.module = cs_obj1.handle();
     pipeline_info.stage.pName = "main";
     pipeline_info.stage.pSpecializationInfo = nullptr;
     VkPipeline cs_pipeline;
+
+    m_errorMonitor->SetDesiredFailureMsg(VK_DEBUG_REPORT_ERROR_BIT_EXT, "exceeds device limit maxComputeWorkGroupSize[0]");
+    m_errorMonitor->SetDesiredFailureMsg(VK_DEBUG_REPORT_ERROR_BIT_EXT, "exceeds device limit maxComputeWorkGroupSize[1]");
+    m_errorMonitor->SetDesiredFailureMsg(VK_DEBUG_REPORT_ERROR_BIT_EXT, "exceeds device limit maxComputeWorkGroupSize[2]");
+    vkCreateComputePipelines(device(), VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &cs_pipeline);
+    m_errorMonitor->VerifyFound();
+
+    // Create a minimal compute pipeline
+    std::string cs_text =
+       "#version 450\nlayout(local_size_x = 1024, local_size_y = 1024, local_size_z = 64) in;\nvoid main() {}\n";  // minimal no-op shader
+    VkShaderObj cs_obj(m_device, cs_text.c_str(), VK_SHADER_STAGE_COMPUTE_BIT, this);
+    pipeline_info.stage.module = cs_obj.handle();
     vkCreateComputePipelines(device(), VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &cs_pipeline);
 
     // Bind pipeline to command buffer
     m_commandBuffer->begin();
     vkCmdBindPipeline(m_commandBuffer->handle(), VK_PIPELINE_BIND_POINT_COMPUTE, cs_pipeline);
+
+    m_errorMonitor->SetDesiredFailureMsg(VK_DEBUG_REPORT_ERROR_BIT_EXT, "features-limits-maxComputeWorkGroupInvocations");
+    vkCmdDispatch(m_commandBuffer->handle(), x_limit, y_limit, z_limit);
+    m_errorMonitor->VerifyFound();
 
     // Dispatch counts that exceed device limits
     m_errorMonitor->SetDesiredFailureMsg(VK_DEBUG_REPORT_ERROR_BIT_EXT, "VUID-vkCmdDispatch-groupCountX-00386");
